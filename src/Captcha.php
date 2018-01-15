@@ -8,7 +8,7 @@ use Illuminate\Hashing\BcryptHasher as Hasher;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Str;
 use Intervention\Image\ImageManager;
-use Illuminate\Session\Store as Session;
+use Illuminate\Support\Facades\Redis;
 
 /**
  * Class Captcha
@@ -31,11 +31,6 @@ class Captcha
      * @var ImageManager
      */
     protected $imageManager;
-
-    /**
-     * @var Session
-     */
-    protected $session;
 
     /**
      * @var Hasher
@@ -148,6 +143,11 @@ class Captcha
     protected $sensitive = false;
 
     /**
+     * @var int
+     */
+    protected $expire = 60;
+
+    /**
      * Constructor
      *
      * @param Filesystem $files
@@ -163,7 +163,6 @@ class Captcha
         Filesystem $files,
         Repository $config,
         ImageManager $imageManager,
-        Session $session,
         Hasher $hasher,
         Str $str
     )
@@ -171,10 +170,9 @@ class Captcha
         $this->files = $files;
         $this->config = $config;
         $this->imageManager = $imageManager;
-        $this->session = $session;
         $this->hasher = $hasher;
         $this->str = $str;
-        $this->characters = config('captcha.characters','2346789abcdefghjmnpqrtuxyzABCDEFGHJMNPQRTUXYZ');
+        $this->characters = config('captcha.characters', '2346789abcdefghjmnpqrtuxyzABCDEFGHJMNPQRTUXYZ');
     }
 
     /**
@@ -183,10 +181,8 @@ class Captcha
      */
     protected function configure($config)
     {
-        if ($this->config->has('captcha.' . $config))
-        {
-            foreach($this->config->get('captcha.' . $config) as $key => $val)
-            {
+        if ($this->config->has('captcha.' . $config)) {
+            foreach ($this->config->get('captcha.' . $config) as $key => $val) {
                 $this->{$key} = $val;
             }
         }
@@ -195,25 +191,26 @@ class Captcha
     /**
      * Create captcha image
      *
+     * @param $key
      * @param string $config
      * @return ImageManager->response
      */
-    public function create($config = 'default')
+    public function create($key, $config = 'default')
     {
         $this->backgrounds = $this->files->files(__DIR__ . '/../assets/backgrounds');
         $this->fonts = $this->files->files(__DIR__ . '/../assets/fonts');
-        
-        if (app()->version() >= 5.5){
-            $this->fonts = array_map(function($file) {
+
+        if (app()->version() >= 5.5) {
+            $this->fonts = array_map(function ($file) {
                 return $file->getPathName();
             }, $this->fonts);
         }
-        
+
         $this->fonts = array_values($this->fonts); //reset fonts array index
 
         $this->configure($config);
 
-        $this->text = $this->generate();
+        $this->text = $this->generate($key);
 
         $this->canvas = $this->imageManager->canvas(
             $this->width,
@@ -221,21 +218,17 @@ class Captcha
             $this->bgColor
         );
 
-        if ($this->bgImage)
-        {
+        if ($this->bgImage) {
             $this->image = $this->imageManager->make($this->background())->resize(
                 $this->width,
                 $this->height
             );
             $this->canvas->insert($this->image);
-        }
-        else
-        {
+        } else {
             $this->image = $this->canvas;
         }
 
-        if ($this->contrast != 0)
-        {
+        if ($this->contrast != 0) {
             $this->image->contrast($this->contrast);
         }
 
@@ -243,16 +236,13 @@ class Captcha
 
         $this->lines();
 
-        if ($this->sharpen)
-        {
+        if ($this->sharpen) {
             $this->image->sharpen($this->sharpen);
         }
-        if ($this->invert)
-        {
+        if ($this->invert) {
             $this->image->invert($this->invert);
         }
-        if ($this->blur)
-        {
+        if ($this->blur) {
             $this->image->blur($this->blur);
         }
 
@@ -272,22 +262,19 @@ class Captcha
     /**
      * Generate captcha text
      *
+     * @param $key
      * @return string
      */
-    protected function generate()
+    protected function generate($key)
     {
         $characters = str_split($this->characters);
 
         $bag = '';
-        for($i = 0; $i < $this->length; $i++)
-        {
+        for ($i = 0; $i < $this->length; $i++) {
             $bag .= $characters[rand(0, count($characters) - 1)];
         }
 
-        $this->session->put('captcha', [
-            'sensitive' => $this->sensitive,
-            'key'       => $this->hasher->make($this->sensitive ? $bag : $this->str->lower($bag))
-        ]);
+        Redis::setex(md5($key), $this->expire, $this->str->lower($bag));
 
         return $bag;
     }
@@ -300,11 +287,10 @@ class Captcha
         $marginTop = $this->image->height() / $this->length;
 
         $i = 0;
-        foreach(str_split($this->text) as $char)
-        {
+        foreach (str_split($this->text) as $char) {
             $marginLeft = ($i * $this->image->width() / $this->length);
 
-            $this->image->text($char, $marginLeft, $marginTop, function($font) {
+            $this->image->text($char, $marginLeft, $marginTop, function ($font) {
                 $font->file($this->font());
                 $font->size($this->fontSize());
                 $font->color($this->fontColor());
@@ -344,12 +330,9 @@ class Captcha
      */
     protected function fontColor()
     {
-        if ( ! empty($this->fontColors))
-        {
+        if (!empty($this->fontColors)) {
             $color = $this->fontColors[rand(0, count($this->fontColors) - 1)];
-        }
-        else
-        {
+        } else {
             $color = [rand(0, 255), rand(0, 255), rand(0, 255)];
         }
 
@@ -373,8 +356,7 @@ class Captcha
      */
     protected function lines()
     {
-        for($i = 0; $i <= $this->lines; $i++)
-        {
+        for ($i = 0; $i <= $this->lines; $i++) {
             $this->image->line(
                 rand(0, $this->image->width()) + $i * rand(0, $this->image->height()),
                 rand(0, $this->image->height()),
@@ -394,23 +376,18 @@ class Captcha
      * @param $value
      * @return bool
      */
-    public function check($value)
+    public function check($key, $value)
     {
-        if ( ! $this->session->has('captcha'))
-        {
+        $key = md5($key);
+        $cacheValue = Redis::get($key);
+
+        if (empty($cacheValue)) {
             return false;
         }
 
-        $key = $this->session->get('captcha.key');
+        $value = $this->str->lower($value);
 
-        if ( ! $this->session->get('captcha.sensitive'))
-        {
-            $value = $this->str->lower($value);
-        }
-
-        $this->session->remove('captcha');
-
-        return $this->hasher->check($value, $key);
+        return $cacheValue == $value;
     }
 
     /**
