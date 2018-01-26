@@ -274,7 +274,7 @@ class Captcha
             $bag .= $characters[rand(0, count($characters) - 1)];
         }
 
-        Redis::setex(md5($key), $this->expire, $this->str->lower($bag));
+        Redis::setex($key, $this->expire, $this->str->lower($bag));
 
         return $bag;
     }
@@ -378,7 +378,6 @@ class Captcha
      */
     public function check($key, $value)
     {
-        $key = md5($key);
         $cacheValue = Redis::get($key);
 
         if (empty($cacheValue)) {
