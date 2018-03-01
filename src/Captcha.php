@@ -376,7 +376,7 @@ class Captcha
      * @param $value
      * @return bool
      */
-    public function check($key, $value)
+    public function check($key, $value, $unset = false)
     {
         $cacheValue = Redis::get($key);
 
@@ -385,6 +385,10 @@ class Captcha
         }
 
         $value = $this->str->lower($value);
+
+        if ($unset) {
+            Redis::del($key);
+        }
 
         return $cacheValue == $value;
     }
